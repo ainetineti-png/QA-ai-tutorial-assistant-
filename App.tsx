@@ -2,7 +2,6 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Chat } from '@google/genai';
 import { ChatMessage, Source, YouTubeVideo, UserProfile } from './types';
 import ChatInterface from './components/ChatInterface';
-import IndexingProgress from './components/IndexingProgress';
 import KeywordsSidebar from './components/KeywordsSidebar';
 import VisualExplainer from './components/VisualExplainer';
 import VideoPlayerModal from './components/VideoPlayerModal';
@@ -37,39 +36,36 @@ const usePersistentState = <T,>(key: string, defaultValue: T): [T, React.Dispatc
 };
 // --- End Local Storage Utilities ---
 
+type AppStatus = 'ready';
 
 const App: React.FC = () => {
-  const [isIndexed, setIsIndexed] = usePersistentState('intellidrive_indexed', false);
-  const [appStatus, setAppStatus] = useState<'indexing' | 'ready'>(
-    isIndexed ? 'ready' : 'indexing'
-  );
+  // Hardcode the app state to 'ready' and knowledge base URL. The setup screens are bypassed.
+  const [appStatus, setAppStatus] = useState<AppStatus>('ready');
+  const [driveFolderUrl, setDriveFolderUrl] = useState<string>('https://drive.google.com/drive/folders/146zHLEQjr0GL_Hn1ovOA-o1H0O6vxXmX');
 
   const getInitialWelcomeMessage = useCallback((): ChatMessage => ({
       id: Date.now(),
       role: 'ai',
-      content: "Knowledge base indexed and ready. Welcome! How can I help you today?",
+      content: "Knowledge base loaded and ready. Welcome! How can I help you today?",
       sources: [],
   }), []);
-
+  
   const getInitialMessages = useCallback((): ChatMessage[] => {
-    if (isIndexed) {
-      try {
-          const storedMessages = window.localStorage.getItem('intellidrive_messages');
-          if (storedMessages && JSON.parse(storedMessages).length > 0) {
-              return JSON.parse(storedMessages);
-          }
-           return [getInitialWelcomeMessage()];
-      } catch (e) {
-        console.warn("Could not parse messages from localStorage.");
-      }
+    try {
+        const storedMessages = window.localStorage.getItem('intellidrive_messages');
+        if (storedMessages && JSON.parse(storedMessages).length > 0) {
+            return JSON.parse(storedMessages);
+        }
+         return [getInitialWelcomeMessage()];
+    } catch (e) {
+      console.warn("Could not parse messages from localStorage.", e);
+      return [getInitialWelcomeMessage()];
     }
-    return []; // No messages while indexing
-  }, [isIndexed, getInitialWelcomeMessage]);
+  }, [getInitialWelcomeMessage]);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = usePersistentState<ChatMessage[]>('intellidrive_messages', getInitialMessages());
-
   const [userProfile, setUserProfile] = usePersistentState<UserProfile | null>('intellidrive_user_profile', null);
   const [chat, setChat] = useState<Chat | null>(null);
 
@@ -81,44 +77,28 @@ const App: React.FC = () => {
   const [visualError, setVisualError] = useState<string | null>(null);
   const [isSidebarVisible, setIsSidebarVisible] = useState(false);
   const [isClearConfirmationVisible, setIsClearConfirmationVisible] = useState(false);
-
   const [playingVideo, setPlayingVideo] = useState<YouTubeVideo | null>(null);
   const [isVideoLoading, setIsVideoLoading] = useState<boolean>(false);
   const [videoError, setVideoError] = useState<string | null>(null);
-
   const [selectedAnimationKeyword, setSelectedAnimationKeyword] = useState<string | null>(null);
   const [isGeneratingAnimation, setIsGeneratingAnimation] = useState<boolean>(false);
   const [animationStatusMessage, setAnimationStatusMessage] = useState<string>('');
   const [animationUrl, setAnimationUrl] = useState<string | null>(null);
   const [animationError, setAnimationError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (appStatus === 'indexing') {
-      const indexingTimer = setTimeout(() => {
-        setAppStatus('ready');
-        setIsIndexed(true);
-        if (messages.length === 0) {
-            setMessages([getInitialWelcomeMessage()]);
-        }
-      }, 6000); 
-      return () => clearTimeout(indexingTimer);
-    }
-  }, [appStatus, messages.length, setIsIndexed, setMessages, getInitialWelcomeMessage]);
   
-  // Initialize and update chat session based on status and user profile
   useEffect(() => {
     if (appStatus === 'ready') {
       setChat(startChat(userProfile));
     }
   }, [appStatus, userProfile]);
 
-  const handleClearChat = () => {
+  const handleResetApp = () => {
+    // We only clear the chat history and related state, not the knowledge base itself.
     setMessages([getInitialWelcomeMessage()]);
     setUserProfile(null);
     setKeywords([]);
     setError(null);
     setIsClearConfirmationVisible(false);
-    // The useEffect above will re-initialize the chat when userProfile is set to null
   };
 
   const handleSendMessage = useCallback(async (prompt: string, options?: { skipTransform?: boolean }) => {
@@ -274,53 +254,51 @@ const App: React.FC = () => {
     }
   }, []);
 
-  if (appStatus === 'indexing') {
-    return <IndexingProgress />;
-  }
-
   return (
-    <ChatProvider value={{ onKeywordVideoSearch: handleVideoSearch }}>
-      <div className="h-screen w-screen flex flex-col p-4 bg-gray-900">
-        <header className="flex items-center justify-between pb-4 border-b border-white/10">
-            <h1 className="text-xl font-bold text-gray-100">IntelliDrive RAG</h1>
-            <div className="flex items-center gap-2">
-                <button
-                    onClick={() => setIsClearConfirmationVisible(true)}
-                    className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
-                    aria-label="Clear chat history"
-                >
-                    <TrashIcon className="w-5 h-5" />
-                </button>
-                <button
-                    onClick={() => setIsSidebarVisible(!isSidebarVisible)}
-                    className="md:hidden p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
-                    aria-label="Toggle key concepts sidebar"
-                >
-                    <ListIcon className="w-5 h-5" />
-                </button>
-            </div>
-        </header>
+    <>
+      <ChatProvider value={{ onKeywordVideoSearch: handleVideoSearch }}>
+        <div className="h-screen w-screen flex flex-col p-4 bg-gray-900">
+          <header className="flex items-center justify-between pb-4 border-b border-white/10">
+              <h1 className="text-xl font-bold text-gray-100">IntelliDrive RAG</h1>
+              <div className="flex items-center gap-2">
+                  <button
+                      onClick={() => setIsClearConfirmationVisible(true)}
+                      className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+                      aria-label="Clear Chat"
+                  >
+                      <TrashIcon className="w-5 h-5" />
+                  </button>
+                  <button
+                      onClick={() => setIsSidebarVisible(!isSidebarVisible)}
+                      className="md:hidden p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+                      aria-label="Toggle key concepts sidebar"
+                  >
+                      <ListIcon className="w-5 h-5" />
+                  </button>
+              </div>
+          </header>
 
-        <main className="flex flex-1 overflow-hidden pt-4 gap-4">
-          <div className="flex-1 flex flex-col bg-gray-800 rounded-xl border border-white/10 shadow-lg overflow-hidden">
-            <ChatInterface
-              messages={messages}
-              onSendMessage={handleSendMessage}
-              isLoading={isLoading}
-              error={error}
-              onExplainFurther={handleExplainFurther}
+          <main className="flex flex-1 overflow-hidden pt-4 gap-4">
+            <div className="flex-1 flex flex-col bg-gray-800 rounded-xl border border-white/10 shadow-lg overflow-hidden">
+              <ChatInterface
+                messages={messages}
+                onSendMessage={handleSendMessage}
+                isLoading={isLoading}
+                error={error}
+                onExplainFurther={handleExplainFurther}
+              />
+            </div>
+            <KeywordsSidebar
+              keywords={keywords}
+              onKeywordVisualize={handleVisualizeKeyword}
+              onKeywordAnimate={handleAnimateKeyword}
+              isLoading={isKeywordsLoading}
+              isOpen={isSidebarVisible}
+              onClose={() => setIsSidebarVisible(false)}
             />
-          </div>
-          <KeywordsSidebar
-            keywords={keywords}
-            onKeywordVisualize={handleVisualizeKeyword}
-            onKeywordAnimate={handleAnimateKeyword}
-            isLoading={isKeywordsLoading}
-            isOpen={isSidebarVisible}
-            onClose={() => setIsSidebarVisible(false)}
-          />
-        </main>
-      </div>
+          </main>
+        </div>
+      </ChatProvider>
 
       {selectedKeyword && (
         <VisualExplainer
@@ -355,13 +333,13 @@ const App: React.FC = () => {
       {isClearConfirmationVisible && (
         <ConfirmationModal
           title="Clear Chat History"
-          message="Are you sure you want to delete all messages? This action cannot be undone."
-          confirmText="Clear History"
-          onConfirm={handleClearChat}
+          message="Are you sure you want to clear the entire conversation? This action cannot be undone."
+          confirmText="Clear Chat"
+          onConfirm={handleResetApp}
           onCancel={() => setIsClearConfirmationVisible(false)}
         />
       )}
-    </ChatProvider>
+    </>
   );
 };
 

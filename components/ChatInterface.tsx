@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { ChatMessage } from '../types';
 import { SendIcon } from './icons/SendIcon';
 import Message from './Message';
@@ -13,16 +13,27 @@ interface ChatInterfaceProps {
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isLoading, error, onExplainFurther }) => {
   const [input, setInput] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollableContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  useLayoutEffect(() => {
+    const scrollContainer = scrollableContainerRef.current;
 
-  useEffect(() => {
-    scrollToBottom();
+    if (scrollContainer) {
+      // Determine if the user was scrolled to the bottom before the new message/chunk arrived.
+      // This check runs *after* the DOM has updated. If the distance from the bottom is less
+      // than a certain threshold, we assume they were at the bottom and want to stay there.
+      const scrollThreshold = 200; // Generous buffer in pixels
+      const isAtBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < scrollThreshold;
+
+      // Only auto-scroll if the user is following the chat at the bottom.
+      // This prevents hijacking the scroll position if they've scrolled up to read past messages.
+      if (isAtBottom) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    }
   }, [messages]);
+
 
   // Auto-resize textarea
   useEffect(() => {
@@ -54,7 +65,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
 
   return (
     <div className="flex flex-col h-full animate-slide-in-bottom">
-      <div className="flex-grow p-6 overflow-y-auto">
+      <div ref={scrollableContainerRef} className="flex-grow p-6 overflow-y-auto">
         <div className="flex flex-col space-y-6">
           {messages.map((msg, index) => {
               const isLastMessage = index === messages.length - 1;
@@ -69,7 +80,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
                 />
               );
             })}
-          <div ref={messagesEndRef} />
         </div>
       </div>
       <div className="p-4 border-t border-white/10">
