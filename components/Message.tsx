@@ -50,10 +50,9 @@ const Message: React.FC<MessageProps> = ({ message }) => {
         <div className="prose prose-invert prose-sm max-w-none">
             {formatContent(message.content)}
             {message.content === '' && (
-                 <div className="flex items-center justify-center">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse mx-1"></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse mx-1 delay-150"></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse mx-1 delay-300"></div>
+                 <div className="flex items-center text-sm text-gray-400">
+                    <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-r-2 border-gray-500 mr-3"></div>
+                    <span>Processing your request...</span>
                 </div>
             )}
         </div>
