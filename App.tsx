@@ -1,49 +1,78 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
-import { ChatMessage, Source, YouTubeVideo } from './types';
+import { Chat } from '@google/genai';
+import { ChatMessage, Source, YouTubeVideo, UserProfile } from './types';
 import ChatInterface from './components/ChatInterface';
 import IndexingProgress from './components/IndexingProgress';
 import KeywordsSidebar from './components/KeywordsSidebar';
 import VisualExplainer from './components/VisualExplainer';
 import VideoPlayerModal from './components/VideoPlayerModal';
+import ConfirmationModal from './components/ConfirmationModal';
 import AnimationGenerationModal from './components/AnimationGenerationModal';
-import { SparklesIcon } from './components/icons/SparklesIcon';
 import { ListIcon } from './components/icons/ListIcon';
-import { generateGroundedAnswer, extractKeywords, generateVisualExplanation, transformQuery, findYoutubeVideo, generateAnimationExplanation } from './services/geminiService';
+import { TrashIcon } from './components/icons/TrashIcon';
+import { startChat, extractKeywords, generateVisualExplanation, transformQuery, findYoutubeVideo, generateAnimationExplanation, analyzeChatHistory } from './services/geminiService';
+import { ChatProvider } from './contexts/ChatContext';
+
+// --- Local Storage Utilities ---
+const usePersistentState = <T,>(key: string, defaultValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
+  const [state, setState] = useState<T>(() => {
+    try {
+      const storedValue = window.localStorage.getItem(key);
+      return storedValue ? JSON.parse(storedValue) : defaultValue;
+    } catch (error) {
+      console.warn(`Error reading localStorage key “${key}”:`, error);
+      return defaultValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(state));
+    } catch (error) {
+      console.warn(`Error setting localStorage key “${key}”:`, error);
+    }
+  }, [key, state]);
+
+  return [state, setState];
+};
+// --- End Local Storage Utilities ---
+
 
 const App: React.FC = () => {
-  // Check localStorage to see if indexing has been completed before.
-  const checkIsIndexed = useCallback(() => {
-    try {
-      return window.localStorage.getItem('intellidrive_indexed') === 'true';
-    } catch (e) {
-      console.warn("Could not access localStorage. Defaulting to false.");
-      return false;
-    }
-  }, []);
-
+  const [isIndexed, setIsIndexed] = usePersistentState('intellidrive_indexed', false);
   const [appStatus, setAppStatus] = useState<'indexing' | 'ready'>(
-    checkIsIndexed() ? 'ready' : 'indexing'
+    isIndexed ? 'ready' : 'indexing'
   );
 
-  // Set initial message based on whether we are loading or not.
+  const getInitialWelcomeMessage = useCallback((): ChatMessage => ({
+      id: Date.now(),
+      role: 'ai',
+      content: "Knowledge base indexed and ready. Welcome! How can I help you today?",
+      sources: [],
+  }), []);
+
   const getInitialMessages = useCallback((): ChatMessage[] => {
-    if (checkIsIndexed()) {
-      return [{
-        id: Date.now(),
-        role: 'ai',
-        content: "Knowledge base indexed and ready. Welcome back! How can I help you today?",
-        sources: [],
-      }];
+    if (isIndexed) {
+      try {
+          const storedMessages = window.localStorage.getItem('intellidrive_messages');
+          if (storedMessages && JSON.parse(storedMessages).length > 0) {
+              return JSON.parse(storedMessages);
+          }
+           return [getInitialWelcomeMessage()];
+      } catch (e) {
+        console.warn("Could not parse messages from localStorage.");
+      }
     }
     return []; // No messages while indexing
-  }, [checkIsIndexed]);
+  }, [isIndexed, getInitialWelcomeMessage]);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>(getInitialMessages);
+  const [messages, setMessages] = usePersistentState<ChatMessage[]>('intellidrive_messages', getInitialMessages());
 
-  // State for the visual explainer feature
+  const [userProfile, setUserProfile] = usePersistentState<UserProfile | null>('intellidrive_user_profile', null);
+  const [chat, setChat] = useState<Chat | null>(null);
+
   const [keywords, setKeywords] = useState<string[]>([]);
   const [isKeywordsLoading, setIsKeywordsLoading] = useState<boolean>(false);
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
@@ -51,13 +80,12 @@ const App: React.FC = () => {
   const [visualImageUrl, setVisualImageUrl] = useState<string | null>(null);
   const [visualError, setVisualError] = useState<string | null>(null);
   const [isSidebarVisible, setIsSidebarVisible] = useState(false);
+  const [isClearConfirmationVisible, setIsClearConfirmationVisible] = useState(false);
 
-  // State for the new video player feature
   const [playingVideo, setPlayingVideo] = useState<YouTubeVideo | null>(null);
   const [isVideoLoading, setIsVideoLoading] = useState<boolean>(false);
   const [videoError, setVideoError] = useState<string | null>(null);
 
-  // State for the new animation feature
   const [selectedAnimationKeyword, setSelectedAnimationKeyword] = useState<string | null>(null);
   const [isGeneratingAnimation, setIsGeneratingAnimation] = useState<boolean>(false);
   const [animationStatusMessage, setAnimationStatusMessage] = useState<string>('');
@@ -65,32 +93,36 @@ const App: React.FC = () => {
   const [animationError, setAnimationError] = useState<string | null>(null);
 
   useEffect(() => {
-    // This effect handles the one-time indexing process if needed.
     if (appStatus === 'indexing') {
       const indexingTimer = setTimeout(() => {
         setAppStatus('ready');
-        setMessages([
-          {
-            id: Date.now(),
-            role: 'ai',
-            content: "Knowledge base indexed and ready. I have access to all documents in the specified Drive folder. How can I help you today?",
-            sources: [],
-          },
-        ]);
-        try {
-          // Mark indexing as complete for future sessions.
-          window.localStorage.setItem('intellidrive_indexed', 'true');
-        } catch (e) {
-          console.warn("Could not write to localStorage.");
+        setIsIndexed(true);
+        if (messages.length === 0) {
+            setMessages([getInitialWelcomeMessage()]);
         }
-      }, 6000); // The duration of the simulated indexing.
-
+      }, 6000); 
       return () => clearTimeout(indexingTimer);
     }
-  }, [appStatus]);
+  }, [appStatus, messages.length, setIsIndexed, setMessages, getInitialWelcomeMessage]);
+  
+  // Initialize and update chat session based on status and user profile
+  useEffect(() => {
+    if (appStatus === 'ready') {
+      setChat(startChat(userProfile));
+    }
+  }, [appStatus, userProfile]);
 
-  const handleSendMessage = useCallback(async (prompt: string) => {
-    if (!prompt) return;
+  const handleClearChat = () => {
+    setMessages([getInitialWelcomeMessage()]);
+    setUserProfile(null);
+    setKeywords([]);
+    setError(null);
+    setIsClearConfirmationVisible(false);
+    // The useEffect above will re-initialize the chat when userProfile is set to null
+  };
+
+  const handleSendMessage = useCallback(async (prompt: string, options?: { skipTransform?: boolean }) => {
+    if (!prompt || !chat) return;
 
     setIsSidebarVisible(false);
     setKeywords([]);
@@ -100,9 +132,14 @@ const App: React.FC = () => {
       content: prompt,
     };
     
-    setMessages(prev => [...prev, userMessage]);
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
     setIsLoading(true);
     setError(null);
+
+    analyzeChatHistory(newMessages).then(setUserProfile).catch(err => {
+        console.warn("Could not analyze user profile:", err);
+    });
 
     const aiMessageId = Date.now() + 1;
     const initialAiMessage: ChatMessage = {
@@ -110,16 +147,15 @@ const App: React.FC = () => {
       role: 'ai',
       content: '',
       sources: [],
+      isStreaming: true,
     };
     setMessages(prev => [...prev, initialAiMessage]);
     
     let finalAnswer = '';
+    let finalSources: Source[] = [];
     try {
-      // RAG Improvement: Transform the user's query for better retrieval.
-      const transformedPrompt = await transformQuery(prompt);
-
-      const stream = generateGroundedAnswer(transformedPrompt);
-      let finalSources: Source[] = [];
+      const transformedPrompt = options?.skipTransform ? prompt : await transformQuery(prompt);
+      const stream = await chat.sendMessageStream({ message: transformedPrompt });
       
       for await (const chunk of stream) {
         finalAnswer += chunk.text;
@@ -129,17 +165,16 @@ const App: React.FC = () => {
           )
         );
 
-        const newSources = chunk.sources;
+        const groundingMetadata = chunk.candidates?.[0]?.groundingMetadata;
+        const newSources = (groundingMetadata?.groundingChunks ?? [])
+            .map(ch => ch.web)
+            .filter((web): web is { uri: string; title?: string } => !!web && !!web.uri)
+            .map(web => ({ uri: web.uri, title: web.title || web.uri }));
+
         if (newSources && newSources.length > 0) {
             finalSources = [...new Map([...finalSources, ...newSources].map(item => [item.uri, item])).values()];
         }
       }
-      
-      setMessages(prev =>
-          prev.map(msg =>
-            msg.id === aiMessageId ? { ...msg, sources: finalSources } : msg
-          )
-        );
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -152,180 +187,181 @@ const App: React.FC = () => {
       );
     } finally {
       setIsLoading(false);
-      if (finalAnswer.trim().length > 50) { // Only extract keywords for substantial answers
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === aiMessageId ? { ...msg, sources: finalSources, isStreaming: false } : msg
+        )
+      );
+      if (finalAnswer.trim().length > 50) { 
         setIsKeywordsLoading(true);
         try {
           const extracted = await extractKeywords(finalAnswer);
           setKeywords(extracted);
         } catch (keywordError) {
-          console.error("Failed to extract keywords:", keywordError);
+           console.warn("Could not extract keywords:", keywordError);
         } finally {
           setIsKeywordsLoading(false);
         }
       }
     }
-  }, []);
+  }, [messages, setMessages, userProfile, setUserProfile, chat]);
 
-  const handleGenerateVisual = useCallback(async (keyword: string) => {
+  const handleExplainFurther = useCallback(() => {
+    handleSendMessage("Can you explain the previous response in more detail, focusing on its key points?", { skipTransform: true });
+  }, [handleSendMessage]);
+
+  const handleVisualizeKeyword = useCallback(async (keyword: string) => {
     setSelectedKeyword(keyword);
     setIsGeneratingVisual(true);
-    setVisualImageUrl(null);
     setVisualError(null);
+    setVisualImageUrl(null);
     try {
       const imageUrl = await generateVisualExplanation(keyword);
       setVisualImageUrl(imageUrl);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      console.error("Image Generation Error:", errorMessage);
-      setVisualError(`Sorry, I couldn't generate a visual for "${keyword}". Please try another concept.`);
+      setVisualError(errorMessage);
     } finally {
       setIsGeneratingVisual(false);
     }
   }, []);
 
-  const handleGenerateAnimation = useCallback(async (keyword: string) => {
+  const handleAnimateKeyword = useCallback(async (keyword: string) => {
     setSelectedAnimationKeyword(keyword);
     setIsGeneratingAnimation(true);
-    setAnimationUrl(null);
     setAnimationError(null);
-    
+    setAnimationUrl(null);
+    setAnimationStatusMessage('');
+
     try {
-      const animationGenerator = generateAnimationExplanation(keyword);
-      for await (const result of animationGenerator) {
-        setAnimationStatusMessage(result.message || '');
-        if (result.status === 'DONE' && result.url) {
-          setAnimationUrl(result.url);
-          setIsGeneratingAnimation(false);
-        } else if (result.status === 'ERROR') {
-          throw new Error(result.message);
+        const stream = generateAnimationExplanation(keyword);
+        for await (const result of stream) {
+            setAnimationStatusMessage(result.message || '');
+            if (result.status === 'DONE' && result.url) {
+                setAnimationUrl(result.url);
+                break; 
+            }
+            if (result.status === 'ERROR') {
+                throw new Error(result.message);
+            }
         }
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+        setAnimationError(errorMessage);
+    } finally {
+        setIsGeneratingAnimation(false);
+    }
+  }, []);
+
+  const handleVideoSearch = useCallback(async (keyword: string) => {
+    setIsVideoLoading(true);
+    setVideoError(null);
+    setPlayingVideo({ title: `Searching for "${keyword}"...`, videoId: '' }); 
+    try {
+      const video = await findYoutubeVideo(keyword);
+      if (video) {
+        setPlayingVideo(video);
+      } else {
+        setVideoError(`Could not find a suitable video for "${keyword}".`);
+        setPlayingVideo(null);
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      console.error("Animation Generation Error:", errorMessage);
-      setAnimationError(`Sorry, I couldn't generate an animation for "${keyword}". ${errorMessage}`);
-      setIsGeneratingAnimation(false);
-    }
-  }, []);
-  
-  const handlePlayVideoForKeyword = useCallback(async (keyword: string) => {
-    setIsVideoLoading(true);
-    setVideoError(null);
-    setPlayingVideo({ title: `Searching for: ${keyword}`, videoId: '' }); // Show modal immediately with loading state
-    try {
-      const videoData = await findYoutubeVideo(keyword);
-      if (videoData) {
-        setPlayingVideo(videoData);
-      } else {
-        throw new Error("No relevant video was found.");
-      }
-    } catch (err) {
-       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-       console.error("Video Search Error:", errorMessage);
-       setVideoError(`Sorry, I couldn't find a video for "${keyword}".`);
-       // Keep modal open to show error, but clear video data
-       setPlayingVideo(null);
+      setVideoError(`Error fetching video: ${errorMessage}`);
+      setPlayingVideo(null);
     } finally {
       setIsVideoLoading(false);
     }
   }, []);
 
-  const handleCloseVisualizer = () => {
-    setSelectedKeyword(null);
-  };
-  
-  const handleCloseVideoPlayer = () => {
-    setPlayingVideo(null);
-    setVideoError(null);
-  };
-
-  const handleCloseAnimationModal = () => {
-    if (animationUrl) {
-      URL.revokeObjectURL(animationUrl); // Clean up blob URL
-    }
-    setSelectedAnimationKeyword(null);
-    setIsGeneratingAnimation(false);
-    setAnimationUrl(null);
-    setAnimationError(null);
-    setAnimationStatusMessage('');
-  };
+  if (appStatus === 'indexing') {
+    return <IndexingProgress />;
+  }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-gray-200 font-sans">
-      <header className="relative flex items-center justify-center p-4 border-b border-gray-700 shadow-md">
-        <div className="flex items-center">
-            <SparklesIcon className="w-8 h-8 text-accent-blue mr-3" />
-            <h1 className="text-2xl font-bold tracking-wider bg-gradient-to-r from-blue-400 to-green-400 text-transparent bg-clip-text">
-            IntelliDrive RAG
-            </h1>
-        </div>
-        {appStatus === 'ready' && (
-            <button
-                onClick={() => setIsSidebarVisible(true)}
-                className="absolute right-4 p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors md:hidden"
-                aria-label="Open key concepts"
-            >
-                <ListIcon className="w-6 h-6" />
-            </button>
-        )}
-      </header>
+    <ChatProvider value={{ onKeywordVideoSearch: handleVideoSearch }}>
+      <div className="h-screen w-screen flex flex-col p-4 bg-gray-900">
+        <header className="flex items-center justify-between pb-4 border-b border-white/10">
+            <h1 className="text-xl font-bold text-gray-100">IntelliDrive RAG</h1>
+            <div className="flex items-center gap-2">
+                <button
+                    onClick={() => setIsClearConfirmationVisible(true)}
+                    className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+                    aria-label="Clear chat history"
+                >
+                    <TrashIcon className="w-5 h-5" />
+                </button>
+                <button
+                    onClick={() => setIsSidebarVisible(!isSidebarVisible)}
+                    className="md:hidden p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+                    aria-label="Toggle key concepts sidebar"
+                >
+                    <ListIcon className="w-5 h-5" />
+                </button>
+            </div>
+        </header>
 
-      <main className="flex-grow flex flex-row items-start p-4 overflow-hidden gap-4">
-        <div className="w-full h-full flex flex-col bg-gray-800 rounded-xl shadow-2xl border border-gray-700 animate-fade-in">
-          {appStatus === 'indexing' ? (
-            <IndexingProgress />
-          ) : (
+        <main className="flex flex-1 overflow-hidden pt-4 gap-4">
+          <div className="flex-1 flex flex-col bg-gray-800 rounded-xl border border-white/10 shadow-lg overflow-hidden">
             <ChatInterface
               messages={messages}
               onSendMessage={handleSendMessage}
               isLoading={isLoading}
               error={error}
-              onKeywordVideoSearch={handlePlayVideoForKeyword}
+              onExplainFurther={handleExplainFurther}
             />
-          )}
-        </div>
-        {appStatus === 'ready' && (
+          </div>
           <KeywordsSidebar
             keywords={keywords}
-            onKeywordVisualize={handleGenerateVisual}
-            onKeywordAnimate={handleGenerateAnimation}
+            onKeywordVisualize={handleVisualizeKeyword}
+            onKeywordAnimate={handleAnimateKeyword}
             isLoading={isKeywordsLoading}
             isOpen={isSidebarVisible}
             onClose={() => setIsSidebarVisible(false)}
           />
-        )}
-      </main>
-      
+        </main>
+      </div>
+
       {selectedKeyword && (
-        <VisualExplainer 
+        <VisualExplainer
           keyword={selectedKeyword}
           imageUrl={visualImageUrl}
           isLoading={isGeneratingVisual}
           error={visualError}
-          onClose={handleCloseVisualizer}
+          onClose={() => setSelectedKeyword(null)}
         />
       )}
 
-      {(playingVideo || isVideoLoading || videoError) && (
-          <VideoPlayerModal
-            video={playingVideo}
-            isLoading={isVideoLoading}
-            error={videoError}
-            onClose={handleCloseVideoPlayer}
-          />
-      )}
-      
-      {selectedAnimationKeyword && (
-        <AnimationGenerationModal
-          keyword={selectedAnimationKeyword}
-          videoUrl={animationUrl}
-          isLoading={isGeneratingAnimation}
-          statusMessage={animationStatusMessage}
-          error={animationError}
-          onClose={handleCloseAnimationModal}
+      {playingVideo && (
+        <VideoPlayerModal
+          video={playingVideo}
+          isLoading={isVideoLoading}
+          error={videoError}
+          onClose={() => { setPlayingVideo(null); setVideoError(null); }}
         />
       )}
-    </div>
+
+      {selectedAnimationKeyword && (
+        <AnimationGenerationModal
+            keyword={selectedAnimationKeyword}
+            videoUrl={animationUrl}
+            isLoading={isGeneratingAnimation}
+            statusMessage={animationStatusMessage}
+            error={animationError}
+            onClose={() => setSelectedAnimationKeyword(null)}
+        />
+      )}
+      
+      {isClearConfirmationVisible && (
+        <ConfirmationModal
+          title="Clear Chat History"
+          message="Are you sure you want to delete all messages? This action cannot be undone."
+          confirmText="Clear History"
+          onConfirm={handleClearChat}
+          onCancel={() => setIsClearConfirmationVisible(false)}
+        />
+      )}
+    </ChatProvider>
   );
 };
 

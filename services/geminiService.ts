@@ -1,46 +1,120 @@
-
-import { GoogleGenAI, Type } from "@google/genai";
-import { Source, YouTubeVideo } from '../types';
-
-interface GroundingChunk {
-  web?: {
-    uri?: string;
-    title?: string;
-  };
-}
-
-interface GroundingMetadata {
-  groundingChunks?: GroundingChunk[];
-}
+import { GoogleGenAI, Type, Chat } from "@google/genai";
+import { Source, YouTubeVideo, ChatMessage, UserProfile } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
-export async function* generateGroundedAnswer(prompt: string): AsyncGenerator<{ text: string; sources: Source[] }> {
+const getAdaptedSystemInstruction = (baseInstruction: string, profile: UserProfile | null): string => {
+    if (!profile) {
+        return baseInstruction;
+    }
+
+    let adaptation = " Based on the user's history, adapt your response with the following considerations:";
+    adaptation += ` The user's knowledge level appears to be '${profile.knowledgeLevel}'.`;
+    adaptation += ` Their current sentiment seems to be '${profile.sentiment}'.`;
+    adaptation += ` They seem to prefer a '${profile.learningStyle}' learning style.`;
+
+    switch (profile.knowledgeLevel) {
+        case 'beginner':
+            adaptation += " Simplify complex topics and use analogies.";
+            break;
+        case 'expert':
+            adaptation += " Feel free to use technical terminology and provide in-depth details.";
+            break;
+    }
+
+    switch (profile.sentiment) {
+        case 'confused':
+            adaptation += " Be extra encouraging, patient, and break down the explanation into smaller, clearer steps.";
+            break;
+        case 'confident':
+             adaptation += " Challenge the user with follow-up questions or advanced concepts.";
+            break;
+    }
+    
+    return baseInstruction + adaptation;
+}
+
+export const startChat = (userProfile: UserProfile | null): Chat => {
+    const baseInstruction = `You are a specialized AI assistant. Your primary goal is to answer questions using information grounded from a knowledge base. Critically evaluate search results for relevance and accuracy. Synthesize information from reliable sources to provide a comprehensive and trustworthy response.
+
+Your response MUST be structured into three distinct sections, in this exact order: \`### Summary\`, \`### Detailed Explanation\`, and \`### In-Depth Analysis\`.
+
+- \`### Summary\`: Provide a concise, direct answer to the user's question. This should be a brief paragraph.
+- \`### Detailed Explanation\`: Elaborate on the summary. Provide more context, background information, and examples.
+- \`### In-Depth Analysis\`: Offer a comprehensive, expert-level breakdown. Include nuances, technical details, and related concepts.
+
+Within each section, use Markdown for formatting (headings, lists, bold text).
+For code blocks, use language-specific triple backticks (e.g., \`\`\`javascript).
+For tables, use GitHub Flavored Markdown.
+For math and chemistry, use LaTeX (e.g., \`$\\ce{H2O}$\`, \`$$E=mc^2$$\`).
+
+IMPORTANT: When you identify an important concept that could benefit from a video explanation, wrap it in double square brackets, like this: [[keyword]]. Do this within any of the three sections where it's relevant.
+
+AFTER the \`### In-Depth Analysis\` section, you may add two optional sections: '### Further Reading' and '### Explanatory Videos' for general resources.`;
+    
+    const systemInstruction = getAdaptedSystemInstruction(baseInstruction, userProfile);
+
+    return ai.chats.create({
+        model: "gemini-2.5-flash",
+        config: {
+            systemInstruction,
+            tools: [{ googleSearch: {} }],
+        },
+    });
+};
+
+/**
+ * Analyzes the chat history to create a profile of the user's learning state.
+ */
+export async function analyzeChatHistory(messages: ChatMessage[]): Promise<UserProfile> {
+    // Take the last 6 messages to keep the context relevant and the payload small.
+    const recentMessages = messages.slice(-6);
+    const formattedHistory = recentMessages.map(m => `${m.role}: ${m.content}`).join('\n');
+
     try {
-        const stream = await ai.models.generateContentStream({
+        const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: prompt,
+            contents: `Analyze the user's learning profile from the following conversation history. Based on their questions and language, determine their sentiment, knowledge level, and preferred learning style.
+            
+            Conversation History:
+            ${formattedHistory}
+            
+            Respond with a JSON object that strictly follows the provided schema.`,
             config: {
-                systemInstruction: "You are a specialized AI assistant. Your primary goal is to answer questions using information grounded from a knowledge base. Critically evaluate search results for relevance and accuracy. Synthesize information from reliable sources to provide a comprehensive and trustworthy response. IMPORTANT: When you identify an important concept in your main answer that could benefit from a video explanation, wrap it in double square brackets, like this: [[keyword]]. Do not add markdown links in the main answer. AFTER providing the main answer, you may add two optional sections: '### Further Reading' and '### Explanatory Videos' for general resources.",
-                tools: [{ googleSearch: {} }],
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        sentiment: {
+                            type: Type.STRING,
+                            enum: ['curious', 'confused', 'confident', 'neutral'],
+                        },
+                        knowledgeLevel: {
+                            type: Type.STRING,
+                            enum: ['beginner', 'intermediate', 'expert'],
+                        },
+                        learningStyle: {
+                            type: Type.STRING,
+                            enum: ['visual', 'detailed', 'concise'],
+                        },
+                    },
+                    required: ["sentiment", "knowledgeLevel", "learningStyle"],
+                },
             },
         });
 
-        for await (const chunk of stream) {
-            const groundingMetadata: GroundingMetadata | undefined = chunk.candidates?.[0]?.groundingMetadata;
-            const sources: Source[] = (groundingMetadata?.groundingChunks ?? [])
-                .map(ch => ch.web)
-                .filter((web): web is { uri: string; title?: string } => !!web && !!web.uri)
-                .map(web => ({ uri: web.uri, title: web.title || web.uri }));
-            
-            yield { text: chunk.text, sources };
-        }
+        const profile = JSON.parse(response.text);
+        console.log("User Profile Updated:", profile); // For debugging
+        return profile;
+
     } catch (error) {
-        console.error("Error in generateGroundedAnswer:", error);
-        if (error instanceof Error) {
-            throw new Error(`Failed to generate content: ${error.message}`);
-        }
-        throw new Error("An unknown error occurred while generating content.");
+        console.error("Error analyzing user profile:", error);
+        // Return a default profile on error to avoid breaking the app
+        return {
+            sentiment: 'neutral',
+            knowledgeLevel: 'intermediate',
+            learningStyle: 'detailed',
+        };
     }
 }
 
@@ -49,29 +123,27 @@ export async function findYoutubeVideo(topic: string): Promise<YouTubeVideo | nu
     try {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: `Find the single best explanatory YouTube video for the topic: "${topic}". The ideal video is a concise, high-quality educational animation or tutorial. Return only the video title and its URL.`,
+            contents: `Search for a high-quality, concise, educational YouTube video explaining "${topic}". The video must be publicly available and allow embedding. Provide the video's title and its 11-character video ID.`,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
-                        title: { type: Type.STRING },
-                        url: { type: Type.STRING }
+                        title: { type: Type.STRING, description: "The title of the YouTube video." },
+                        videoId: { type: Type.STRING, description: "The 11-character unique ID of the YouTube video." }
                     },
-                    required: ["title", "url"],
+                    required: ["title", "videoId"],
                 },
             },
         });
 
         const json = JSON.parse(response.text);
-        const url = json.url;
-
-        if (url && url.includes("youtube.com/watch")) {
-            const videoId = new URL(url).searchParams.get("v");
-            if (videoId) {
-                return { title: json.title, videoId: videoId };
-            }
+        // Basic validation for video ID format
+        if (json.videoId && /^[a-zA-Z0-9_-]{11}$/.test(json.videoId)) {
+            return { title: json.title, videoId: json.videoId };
         }
+        
+        console.warn("LLM returned invalid video data:", json);
         return null;
 
     } catch(error) {
@@ -80,10 +152,6 @@ export async function findYoutubeVideo(topic: string): Promise<YouTubeVideo | nu
     }
 }
 
-/**
- * RAG Improvement: Transforms a user's query into a more detailed, specific
- * query to improve retrieval accuracy from the knowledge base.
- */
 export async function transformQuery(prompt: string): Promise<string> {
   try {
     const response = await ai.models.generateContent({
@@ -92,12 +160,11 @@ export async function transformQuery(prompt: string): Promise<string> {
       config: { temperature: 0.3 }
     });
     const transformed = response.text.trim();
-    // For debugging: log the transformation
     console.log(`Original: "${prompt}" | Transformed: "${transformed}"`);
-    return transformed || prompt; // Fallback to original prompt if generation is empty
+    return transformed || prompt; 
   } catch (error) {
     console.error("Error transforming query:", error);
-    return prompt; // Fallback to original prompt on error
+    return prompt;
   }
 }
 
@@ -126,7 +193,7 @@ export async function extractKeywords(text: string): Promise<string[]> {
     return json.keywords || [];
   } catch (error) {
     console.error("Error extracting keywords:", error);
-    return []; // Return empty array on failure
+    return []; 
   }
 }
 

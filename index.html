@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -7,12 +6,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IntelliDrive RAG</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0KOVwM8SpTTCFXKvEpiiEduMmgwgdtKbZvJsVPRvKTDfgGdWFL3iA" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vsc-dark-plus.min.css">
+
     <script>
       tailwind.config = {
         theme: {
           extend: {
+             typography: ({ theme }) => ({
+              invert: {
+                css: {
+                  '--tw-prose-code': theme('colors.gray[300]'),
+                  '--tw-prose-pre-bg': theme('colors.gray[800]'),
+                   '--tw-prose-th-borders': theme('colors.gray[600]'),
+                  '--tw-prose-td-borders': theme('colors.gray[700]'),
+                },
+              },
+            }),
             colors: {
               'gray-900': '#121212',
+              'gray-850': '#181818',
               'gray-800': '#1e1e1e',
               'gray-700': '#2d2d2d',
               'gray-600': '#444444',
@@ -24,6 +37,8 @@
             animation: {
               'fade-in': 'fadeIn 0.5s ease-out forwards',
               'slide-in-bottom': 'slideInBottom 0.5s ease-out forwards',
+              'shimmer': 'shimmer 2s linear infinite',
+              'focus-pulse': 'focusPulse 1s ease-out',
             },
             keyframes: {
               fadeIn: {
@@ -33,10 +48,22 @@
               slideInBottom: {
                 '0%': { transform: 'translateY(20px)', opacity: 0 },
                 '100%': { transform: 'translateY(0)', opacity: 1 },
+              },
+               shimmer: {
+                '0%': { 'background-position': '-1000px 0' },
+                '100%': { 'background-position': '1000px 0' },
+              },
+              focusPulse: {
+                '0%': { 'box-shadow': '0 0 0 0 rgba(59, 130, 246, 0.4)' },
+                '70%': { 'box-shadow': '0 0 0 4px rgba(59, 130, 246, 0)' },
+                '100%': { 'box-shadow': '0 0 0 0 rgba(59, 130, 246, 0)' },
               }
             }
           }
-        }
+        },
+        plugins: [
+            require('@tailwindcss/typography'),
+        ],
       }
     </script>
   <script type="importmap">
@@ -45,10 +72,52 @@
     "react/": "https://aistudiocdn.com/react@^19.1.1/",
     "react": "https://aistudiocdn.com/react@^19.1.1",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.17.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/"
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+    "react-markdown": "https://esm.sh/react-markdown@9?external=react",
+    "remark-gfm": "https://esm.sh/remark-gfm@4",
+    "rehype-katex": "https://esm.sh/rehype-katex@7",
+    "react-syntax-highlighter": "https://esm.sh/react-syntax-highlighter@15",
+    "react-syntax-highlighter/dist/esm/styles/prism": "https://esm.sh/react-syntax-highlighter@15/dist/esm/styles/prism",
+    "react-syntax-highlighter/": "https://aistudiocdn.com/react-syntax-highlighter@^15.6.6/"
   }
 }
 </script>
+<style>
+  body {
+    background-color: #121212;
+    background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0);
+    background-size: 2rem 2rem;
+  }
+  .katex { 
+      font-size: 1.1em !important; 
+      color: #e0e0e0; 
+  }
+  .markdown-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      margin-bottom: 1rem;
+  }
+  .markdown-content th, .markdown-content td {
+      border: 1px solid #444444;
+      padding: 0.5rem 0.75rem;
+  }
+  .markdown-content th {
+      background-color: #2d2d2d;
+      font-weight: bold;
+      text-align: left;
+  }
+  .markdown-content tr:nth-child(even) {
+      background-color: #1e1e1e;
+  }
+   /* Style for code blocks */
+  .markdown-content pre {
+    background-color: #1e1e1e !important;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid #2d2d2d;
+  }
+</style>
 </head>
   <body class="bg-gray-900 text-gray-200 antialiased">
     <div id="root"></div>

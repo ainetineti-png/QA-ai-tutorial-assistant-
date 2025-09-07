@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { LightbulbIcon } from './icons/LightbulbIcon';
 import { CloseIcon } from './icons/CloseIcon';
@@ -29,9 +28,12 @@ const SidebarContent: React.FC<Pick<KeywordsSidebarProps, 'isLoading' | 'keyword
     {!isLoading && keywords.length > 0 && (
       <div className="flex flex-col space-y-2">
         {keywords.map((keyword, index) => (
-           <div key={index} className="group flex items-center justify-between bg-gray-700 rounded-md text-sm text-gray-300 px-3 py-2">
-            <span className="truncate pr-2">{keyword}</span>
-            <div className="flex items-center space-x-1">
+           <div key={index} className="group relative flex items-center justify-between bg-gray-700/50 hover:bg-gray-700 border border-transparent hover:border-white/10 rounded-md text-sm text-gray-300 px-3 py-2 transition-all duration-300">
+            <div className="absolute -inset-px rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 overflow-hidden">
+                <div className="absolute -inset-full animate-shimmer bg-[linear-gradient(110deg,transparent,25%,rgba(255,255,255,0.1),50%,transparent)] bg-[length:200%_100%]"></div>
+            </div>
+            <span className="truncate pr-2 relative z-10">{keyword}</span>
+            <div className="flex items-center space-x-1 relative z-10">
               <button 
                 onClick={() => onKeywordVisualize(keyword)}
                 className="p-1.5 rounded-full text-gray-400 hover:bg-accent-blue hover:text-white transition-colors"
@@ -67,14 +69,14 @@ const KeywordsSidebar: React.FC<KeywordsSidebarProps> = ({ keywords, onKeywordVi
           aria-hidden="true"
         />
         <aside
-          className={`fixed top-0 right-0 h-full w-72 bg-gray-800 shadow-2xl border-l border-gray-700 z-40 transform transition-transform duration-300 ease-in-out flex flex-col ${
+          className={`fixed top-0 right-0 h-full w-72 bg-gray-850 shadow-2xl border-l border-white/10 z-40 transform transition-transform duration-300 ease-in-out flex flex-col ${
             isOpen ? 'translate-x-0' : 'translate-x-full'
           }`}
           role="dialog"
           aria-modal="true"
           aria-labelledby="sidebar-title"
         >
-          <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+          <div className="p-4 border-b border-white/10 flex items-center justify-between">
             <div className="flex items-center">
                 <LightbulbIcon className="w-6 h-6 mr-3 text-accent-green" />
                 <h2 id="sidebar-title" className="text-lg font-semibold text-gray-200">Key Concepts</h2>
@@ -92,10 +94,10 @@ const KeywordsSidebar: React.FC<KeywordsSidebarProps> = ({ keywords, onKeywordVi
       </div>
 
       {/* Desktop Sidebar (Static) */}
-      <aside className="w-64 h-full flex-shrink-0 bg-gray-800 rounded-xl shadow-2xl border border-gray-700 animate-fade-in hidden md:flex flex-col">
-        <div className="p-4 border-b border-gray-700 flex items-center">
+      <aside className="w-64 h-full flex-shrink-0 bg-gray-850/50 rounded-xl shadow-2xl border border-white/10 animate-fade-in hidden md:flex flex-col">
+        <div className="p-4 border-b border-white/10 flex items-center">
           <LightbulbIcon className="w-6 h-6 mr-3 text-accent-green" />
-          <h2 className="text-lg font-semibold text-gray-200">Key Concepts</h2>
+          <h2 id="sidebar-title-desktop" className="text-lg font-semibold text-gray-200">Key Concepts</h2>
         </div>
         <SidebarContent isLoading={isLoading} keywords={keywords} onKeywordVisualize={onKeywordVisualize} onKeywordAnimate={onKeywordAnimate} />
       </aside>
