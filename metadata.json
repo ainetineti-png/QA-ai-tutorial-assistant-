@@ -1,0 +1,5 @@
+{
+  "name": "IntelliDrive RAG",
+  "description": "An intelligent RAG (Retrieval-Augmented Generation) application that allows users to ask questions against a knowledge base simulated from a Google Drive folder. It uses Gemini with Google Search grounding to provide detailed, accurate, and context-aware answers with source citations.",
+  "requestFramePermissions": []
+}
