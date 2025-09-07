@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Source } from '../types';
+import { Source, YouTubeVideo } from '../types';
 
 interface GroundingChunk {
   web?: {
@@ -21,7 +21,7 @@ export async function* generateGroundedAnswer(prompt: string): AsyncGenerator<{ 
             model: "gemini-2.5-flash",
             contents: prompt,
             config: {
-                systemInstruction: "You are a specialized AI assistant with expertise in analyzing documents from a specific knowledge base, represented by the public Google Drive folder '146zHLEQjr0GL_Hn1ovOA-o1H0O6vxXmX'. This folder contains educational materials, including PDFs with text, diagrams, and maps. When a user asks a question, your primary goal is to answer it using information grounded from this knowledge base via web search. Critically evaluate the retrieved search results for relevance, accuracy, and depth before constructing your answer. Synthesize information from the most reliable sources to provide a comprehensive and trustworthy response. Pay special attention to visual details described in questions, such as interpreting maps or diagrams (e.g., 'Figure 4.4'). For map-related questions, carefully analyze symbols for roads (e.g., solid lines for metalled/paved roads, dashed lines for unmetalled/unpaved roads), rivers, buildings, and directional indicators. If the information is not available in the search results, state that you could not find the specific information within the provided context. Always be helpful and accurate, and cite your sources.",
+                systemInstruction: "You are a specialized AI assistant. Your primary goal is to answer questions using information grounded from a knowledge base. Critically evaluate search results for relevance and accuracy. Synthesize information from reliable sources to provide a comprehensive and trustworthy response. IMPORTANT: When you identify an important concept in your main answer that could benefit from a video explanation, wrap it in double square brackets, like this: [[keyword]]. Do not add markdown links in the main answer. AFTER providing the main answer, you may add two optional sections: '### Further Reading' and '### Explanatory Videos' for general resources.",
                 tools: [{ googleSearch: {} }],
             },
         });
@@ -41,6 +41,42 @@ export async function* generateGroundedAnswer(prompt: string): AsyncGenerator<{ 
             throw new Error(`Failed to generate content: ${error.message}`);
         }
         throw new Error("An unknown error occurred while generating content.");
+    }
+}
+
+
+export async function findYoutubeVideo(topic: string): Promise<YouTubeVideo | null> {
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: `Find the single best explanatory YouTube video for the topic: "${topic}". The ideal video is a concise, high-quality educational animation or tutorial. Return only the video title and its URL.`,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING },
+                        url: { type: Type.STRING }
+                    },
+                    required: ["title", "url"],
+                },
+            },
+        });
+
+        const json = JSON.parse(response.text);
+        const url = json.url;
+
+        if (url && url.includes("youtube.com/watch")) {
+            const videoId = new URL(url).searchParams.get("v");
+            if (videoId) {
+                return { title: json.title, videoId: videoId };
+            }
+        }
+        return null;
+
+    } catch(error) {
+        console.error("Error finding YouTube video:", error);
+        return null;
     }
 }
 
@@ -114,5 +150,67 @@ export async function generateVisualExplanation(keyword: string): Promise<string
         throw new Error(`Failed to generate image: ${error.message}`);
     }
     throw new Error("An unknown error occurred while generating the image.");
+  }
+}
+
+export async function* generateAnimationExplanation(keyword: string): AsyncGenerator<{ status: 'PENDING' | 'RUNNING' | 'DONE' | 'ERROR'; message?: string; url?: string; }> {
+  const reassuringMessages = [
+    "Sketching out the main concepts...",
+    "Choosing a color palette...",
+    "Animating the first few frames...",
+    "Rendering the sequence, this is the longest step...",
+    "Adding final touches and polish...",
+    "Almost there, preparing the video file...",
+  ];
+  let messageIndex = 0;
+
+  try {
+    yield { status: 'PENDING', message: 'Initiating animation request...' };
+    
+    let operation = await ai.models.generateVideos({
+      model: 'veo-2.0-generate-001',
+      prompt: `A short, simple, silent, looping educational animation explaining the concept of "${keyword}". Minimalist infographic style, clear visuals, no text overlay.`,
+      config: {
+        numberOfVideos: 1,
+      }
+    });
+
+    yield { status: 'RUNNING', message: 'Request received, starting generation...' };
+
+    while (!operation.done) {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      
+      yield { status: 'RUNNING', message: reassuringMessages[messageIndex % reassuringMessages.length] };
+      messageIndex++;
+      
+      operation = await ai.operations.getVideosOperation({ operation: operation });
+    }
+
+    if (operation.response?.generatedVideos && operation.response.generatedVideos.length > 0) {
+      const downloadLink = operation.response.generatedVideos[0]?.video?.uri;
+      if (!downloadLink) {
+        throw new Error("Video generation completed, but no download link was provided.");
+      }
+      
+      yield { status: 'RUNNING', message: 'Generation complete! Downloading video...' };
+
+      const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+      if (!videoResponse.ok) {
+        throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+      }
+
+      const blob = await videoResponse.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      
+      yield { status: 'DONE', url: objectUrl };
+
+    } else {
+      throw new Error("Video generation operation finished but produced no video.");
+    }
+
+  } catch (error) {
+    console.error("Error generating animation:", error);
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during animation generation.";
+    yield { status: 'ERROR', message: errorMessage };
   }
 }

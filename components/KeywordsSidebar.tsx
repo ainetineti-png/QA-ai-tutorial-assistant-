@@ -2,21 +2,24 @@
 import React from 'react';
 import { LightbulbIcon } from './icons/LightbulbIcon';
 import { CloseIcon } from './icons/CloseIcon';
+import { ImageIcon } from './icons/ImageIcon';
+import { AnimationIcon } from './icons/AnimationIcon';
 
 interface KeywordsSidebarProps {
   keywords: string[];
-  onKeywordClick: (keyword: string) => void;
+  onKeywordVisualize: (keyword: string) => void;
+  onKeywordAnimate: (keyword: string) => void;
   isLoading: boolean;
   isOpen: boolean;
   onClose: () => void;
 }
 
-const SidebarContent: React.FC<Pick<KeywordsSidebarProps, 'isLoading' | 'keywords' | 'onKeywordClick'>> = ({ isLoading, keywords, onKeywordClick }) => (
+const SidebarContent: React.FC<Pick<KeywordsSidebarProps, 'isLoading' | 'keywords' | 'onKeywordVisualize' | 'onKeywordAnimate'>> = ({ isLoading, keywords, onKeywordVisualize, onKeywordAnimate }) => (
   <div className="p-4 flex-grow overflow-y-auto">
     {isLoading && (
       <div className="space-y-3">
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-8 bg-gray-700 rounded-md animate-pulse"></div>
+          <div key={i} className="h-10 bg-gray-700 rounded-md animate-pulse"></div>
         ))}
       </div>
     )}
@@ -26,20 +29,32 @@ const SidebarContent: React.FC<Pick<KeywordsSidebarProps, 'isLoading' | 'keyword
     {!isLoading && keywords.length > 0 && (
       <div className="flex flex-col space-y-2">
         {keywords.map((keyword, index) => (
-          <button
-            key={index}
-            onClick={() => onKeywordClick(keyword)}
-            className="w-full text-left px-3 py-2 text-sm text-gray-300 bg-gray-700 rounded-md hover:bg-accent-blue hover:text-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-accent-blue"
-          >
-            {keyword}
-          </button>
+           <div key={index} className="group flex items-center justify-between bg-gray-700 rounded-md text-sm text-gray-300 px-3 py-2">
+            <span className="truncate pr-2">{keyword}</span>
+            <div className="flex items-center space-x-1">
+              <button 
+                onClick={() => onKeywordVisualize(keyword)}
+                className="p-1.5 rounded-full text-gray-400 hover:bg-accent-blue hover:text-white transition-colors"
+                title={`Visualize ${keyword}`}
+              >
+                <ImageIcon className="w-5 h-5" />
+              </button>
+              <button 
+                onClick={() => onKeywordAnimate(keyword)}
+                className="p-1.5 rounded-full text-gray-400 hover:bg-accent-green hover:text-white transition-colors"
+                title={`Animate ${keyword}`}
+              >
+                <AnimationIcon className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
         ))}
       </div>
     )}
   </div>
 );
 
-const KeywordsSidebar: React.FC<KeywordsSidebarProps> = ({ keywords, onKeywordClick, isLoading, isOpen, onClose }) => {
+const KeywordsSidebar: React.FC<KeywordsSidebarProps> = ({ keywords, onKeywordVisualize, onKeywordAnimate, isLoading, isOpen, onClose }) => {
   return (
     <>
       {/* Mobile Sidebar (Overlay) */}
@@ -72,7 +87,7 @@ const KeywordsSidebar: React.FC<KeywordsSidebarProps> = ({ keywords, onKeywordCl
               <CloseIcon className="w-5 h-5" />
             </button>
           </div>
-          <SidebarContent isLoading={isLoading} keywords={keywords} onKeywordClick={onKeywordClick} />
+          <SidebarContent isLoading={isLoading} keywords={keywords} onKeywordVisualize={onKeywordVisualize} onKeywordAnimate={onKeywordAnimate} />
         </aside>
       </div>
 
@@ -82,7 +97,7 @@ const KeywordsSidebar: React.FC<KeywordsSidebarProps> = ({ keywords, onKeywordCl
           <LightbulbIcon className="w-6 h-6 mr-3 text-accent-green" />
           <h2 className="text-lg font-semibold text-gray-200">Key Concepts</h2>
         </div>
-        <SidebarContent isLoading={isLoading} keywords={keywords} onKeywordClick={onKeywordClick} />
+        <SidebarContent isLoading={isLoading} keywords={keywords} onKeywordVisualize={onKeywordVisualize} onKeywordAnimate={onKeywordAnimate} />
       </aside>
     </>
   );

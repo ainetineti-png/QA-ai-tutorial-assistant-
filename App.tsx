@@ -1,21 +1,49 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { ChatMessage, Source } from './types';
+import { ChatMessage, Source, YouTubeVideo } from './types';
 import ChatInterface from './components/ChatInterface';
 import IndexingProgress from './components/IndexingProgress';
 import KeywordsSidebar from './components/KeywordsSidebar';
 import VisualExplainer from './components/VisualExplainer';
+import VideoPlayerModal from './components/VideoPlayerModal';
+import AnimationGenerationModal from './components/AnimationGenerationModal';
 import { SparklesIcon } from './components/icons/SparklesIcon';
 import { ListIcon } from './components/icons/ListIcon';
-import { generateGroundedAnswer, extractKeywords, generateVisualExplanation, transformQuery } from './services/geminiService';
+import { generateGroundedAnswer, extractKeywords, generateVisualExplanation, transformQuery, findYoutubeVideo, generateAnimationExplanation } from './services/geminiService';
 
 const App: React.FC = () => {
-  const [appStatus, setAppStatus] = useState<'indexing' | 'ready'>('indexing');
+  // Check localStorage to see if indexing has been completed before.
+  const checkIsIndexed = useCallback(() => {
+    try {
+      return window.localStorage.getItem('intellidrive_indexed') === 'true';
+    } catch (e) {
+      console.warn("Could not access localStorage. Defaulting to false.");
+      return false;
+    }
+  }, []);
+
+  const [appStatus, setAppStatus] = useState<'indexing' | 'ready'>(
+    checkIsIndexed() ? 'ready' : 'indexing'
+  );
+
+  // Set initial message based on whether we are loading or not.
+  const getInitialMessages = useCallback((): ChatMessage[] => {
+    if (checkIsIndexed()) {
+      return [{
+        id: Date.now(),
+        role: 'ai',
+        content: "Knowledge base indexed and ready. Welcome back! How can I help you today?",
+        sources: [],
+      }];
+    }
+    return []; // No messages while indexing
+  }, [checkIsIndexed]);
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(getInitialMessages);
 
-  // State for the new visual explainer feature
+  // State for the visual explainer feature
   const [keywords, setKeywords] = useState<string[]>([]);
   const [isKeywordsLoading, setIsKeywordsLoading] = useState<boolean>(false);
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
@@ -24,21 +52,42 @@ const App: React.FC = () => {
   const [visualError, setVisualError] = useState<string | null>(null);
   const [isSidebarVisible, setIsSidebarVisible] = useState(false);
 
-  useEffect(() => {
-    const indexingTimer = setTimeout(() => {
-      setAppStatus('ready');
-      setMessages([
-        {
-          id: Date.now(),
-          role: 'ai',
-          content: "Knowledge base indexed and ready. I have access to all documents in the specified Drive folder. How can I help you today?",
-          sources: [],
-        },
-      ]);
-    }, 6000);
+  // State for the new video player feature
+  const [playingVideo, setPlayingVideo] = useState<YouTubeVideo | null>(null);
+  const [isVideoLoading, setIsVideoLoading] = useState<boolean>(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
 
-    return () => clearTimeout(indexingTimer);
-  }, []);
+  // State for the new animation feature
+  const [selectedAnimationKeyword, setSelectedAnimationKeyword] = useState<string | null>(null);
+  const [isGeneratingAnimation, setIsGeneratingAnimation] = useState<boolean>(false);
+  const [animationStatusMessage, setAnimationStatusMessage] = useState<string>('');
+  const [animationUrl, setAnimationUrl] = useState<string | null>(null);
+  const [animationError, setAnimationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // This effect handles the one-time indexing process if needed.
+    if (appStatus === 'indexing') {
+      const indexingTimer = setTimeout(() => {
+        setAppStatus('ready');
+        setMessages([
+          {
+            id: Date.now(),
+            role: 'ai',
+            content: "Knowledge base indexed and ready. I have access to all documents in the specified Drive folder. How can I help you today?",
+            sources: [],
+          },
+        ]);
+        try {
+          // Mark indexing as complete for future sessions.
+          window.localStorage.setItem('intellidrive_indexed', 'true');
+        } catch (e) {
+          console.warn("Could not write to localStorage.");
+        }
+      }, 6000); // The duration of the simulated indexing.
+
+      return () => clearTimeout(indexingTimer);
+    }
+  }, [appStatus]);
 
   const handleSendMessage = useCallback(async (prompt: string) => {
     if (!prompt) return;
@@ -117,7 +166,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleKeywordClick = useCallback(async (keyword: string) => {
+  const handleGenerateVisual = useCallback(async (keyword: string) => {
     setSelectedKeyword(keyword);
     setIsGeneratingVisual(true);
     setVisualImageUrl(null);
@@ -134,8 +183,71 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const handleGenerateAnimation = useCallback(async (keyword: string) => {
+    setSelectedAnimationKeyword(keyword);
+    setIsGeneratingAnimation(true);
+    setAnimationUrl(null);
+    setAnimationError(null);
+    
+    try {
+      const animationGenerator = generateAnimationExplanation(keyword);
+      for await (const result of animationGenerator) {
+        setAnimationStatusMessage(result.message || '');
+        if (result.status === 'DONE' && result.url) {
+          setAnimationUrl(result.url);
+          setIsGeneratingAnimation(false);
+        } else if (result.status === 'ERROR') {
+          throw new Error(result.message);
+        }
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      console.error("Animation Generation Error:", errorMessage);
+      setAnimationError(`Sorry, I couldn't generate an animation for "${keyword}". ${errorMessage}`);
+      setIsGeneratingAnimation(false);
+    }
+  }, []);
+  
+  const handlePlayVideoForKeyword = useCallback(async (keyword: string) => {
+    setIsVideoLoading(true);
+    setVideoError(null);
+    setPlayingVideo({ title: `Searching for: ${keyword}`, videoId: '' }); // Show modal immediately with loading state
+    try {
+      const videoData = await findYoutubeVideo(keyword);
+      if (videoData) {
+        setPlayingVideo(videoData);
+      } else {
+        throw new Error("No relevant video was found.");
+      }
+    } catch (err) {
+       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+       console.error("Video Search Error:", errorMessage);
+       setVideoError(`Sorry, I couldn't find a video for "${keyword}".`);
+       // Keep modal open to show error, but clear video data
+       setPlayingVideo(null);
+    } finally {
+      setIsVideoLoading(false);
+    }
+  }, []);
+
   const handleCloseVisualizer = () => {
     setSelectedKeyword(null);
+  };
+  
+  const handleCloseVideoPlayer = () => {
+    setPlayingVideo(null);
+    setVideoError(null);
+  };
+
+  const handleCloseAnimationModal = () => {
+    if (animationUrl) {
+      URL.revokeObjectURL(animationUrl); // Clean up blob URL
+    }
+    setSelectedAnimationKeyword(null);
+    setIsGeneratingAnimation(false);
+    setAnimationUrl(null);
+    setAnimationError(null);
+    setAnimationStatusMessage('');
   };
 
   return (
@@ -168,13 +280,15 @@ const App: React.FC = () => {
               onSendMessage={handleSendMessage}
               isLoading={isLoading}
               error={error}
+              onKeywordVideoSearch={handlePlayVideoForKeyword}
             />
           )}
         </div>
         {appStatus === 'ready' && (
           <KeywordsSidebar
             keywords={keywords}
-            onKeywordClick={handleKeywordClick}
+            onKeywordVisualize={handleGenerateVisual}
+            onKeywordAnimate={handleGenerateAnimation}
             isLoading={isKeywordsLoading}
             isOpen={isSidebarVisible}
             onClose={() => setIsSidebarVisible(false)}
@@ -189,6 +303,26 @@ const App: React.FC = () => {
           isLoading={isGeneratingVisual}
           error={visualError}
           onClose={handleCloseVisualizer}
+        />
+      )}
+
+      {(playingVideo || isVideoLoading || videoError) && (
+          <VideoPlayerModal
+            video={playingVideo}
+            isLoading={isVideoLoading}
+            error={videoError}
+            onClose={handleCloseVideoPlayer}
+          />
+      )}
+      
+      {selectedAnimationKeyword && (
+        <AnimationGenerationModal
+          keyword={selectedAnimationKeyword}
+          videoUrl={animationUrl}
+          isLoading={isGeneratingAnimation}
+          statusMessage={animationStatusMessage}
+          error={animationError}
+          onClose={handleCloseAnimationModal}
         />
       )}
     </div>

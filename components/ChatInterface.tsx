@@ -9,9 +9,10 @@ interface ChatInterfaceProps {
   onSendMessage: (prompt: string) => void;
   isLoading: boolean;
   error: string | null;
+  onKeywordVideoSearch: (keyword: string) => void;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isLoading, error }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isLoading, error, onKeywordVideoSearch }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -42,7 +43,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
       <div className="flex-grow p-6 overflow-y-auto">
         <div className="flex flex-col space-y-6">
           {messages.map((msg) => (
-            <Message key={msg.id} message={msg} />
+            <Message key={msg.id} message={msg} onKeywordVideoSearch={onKeywordVideoSearch} />
           ))}
           <div ref={messagesEndRef} />
         </div>
