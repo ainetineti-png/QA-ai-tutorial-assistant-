@@ -9,7 +9,7 @@ import ConfirmationModal from './components/ConfirmationModal';
 import AnimationGenerationModal from './components/AnimationGenerationModal';
 import { ListIcon } from './components/icons/ListIcon';
 import { TrashIcon } from './components/icons/TrashIcon';
-import { startChat, extractKeywords, generateVisualExplanation, transformQuery, findYoutubeVideo, generateAnimationExplanation, analyzeChatHistory } from './services/geminiService';
+import { startChat, extractKeywords, generateVisualExplanation, editVisualExplanation, transformQuery, findYoutubeVideo, generateAnimationExplanation, analyzeChatHistory } from './services/geminiService';
 import { ChatProvider } from './contexts/ChatContext';
 
 // --- Local Storage Utilities ---
@@ -206,6 +206,20 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const handleEditVisual = useCallback(async (base64Image: string, prompt: string): Promise<void> => {
+      setIsGeneratingVisual(true);
+      setVisualError(null);
+      try {
+          const newImageUrl = await editVisualExplanation(base64Image, prompt);
+          setVisualImageUrl(newImageUrl);
+      } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+          setVisualError(`Failed to edit image: ${errorMessage}`);
+      } finally {
+          setIsGeneratingVisual(false);
+      }
+  }, []);
+
   const handleAnimateKeyword = useCallback(async (keyword: string) => {
     setSelectedAnimationKeyword(keyword);
     setIsGeneratingAnimation(true);
@@ -307,6 +321,7 @@ const App: React.FC = () => {
           isLoading={isGeneratingVisual}
           error={visualError}
           onClose={() => setSelectedKeyword(null)}
+          onEdit={handleEditVisual}
         />
       )}
 

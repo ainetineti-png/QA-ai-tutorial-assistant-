@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, Chat } from "@google/genai";
+import { GoogleGenAI, Type, Chat, Modality } from "@google/genai";
 import { Source, YouTubeVideo, ChatMessage, UserProfile } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
@@ -218,6 +218,54 @@ export async function generateVisualExplanation(keyword: string): Promise<string
     }
     throw new Error("An unknown error occurred while generating the image.");
   }
+}
+
+export async function editVisualExplanation(base64ImageDataUrl: string, prompt: string): Promise<string> {
+    try {
+        const match = base64ImageDataUrl.match(/^data:(image\/.+);base64,(.+)$/);
+        if (!match) {
+            throw new Error("Invalid base64 image data URL format.");
+        }
+        const mimeType = match[1];
+        const base64Data = match[2];
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image-preview',
+            contents: {
+                parts: [
+                    {
+                        inlineData: {
+                            data: base64Data,
+                            mimeType: mimeType,
+                        },
+                    },
+                    { text: prompt },
+                ],
+            },
+            config: {
+                responseModalities: [Modality.IMAGE, Modality.TEXT],
+            },
+        });
+
+        const imagePart = response.candidates?.[0]?.content?.parts.find(part => part.inlineData);
+        if (imagePart?.inlineData) {
+            const newBase64Data = imagePart.inlineData.data;
+            const newMimeType = imagePart.inlineData.mimeType;
+            return `data:${newMimeType};base64,${newBase64Data}`;
+        } else {
+            const textPart = response.candidates?.[0]?.content?.parts.find(part => part.text);
+            if (textPart?.text) {
+                 throw new Error(`Model returned text instead of an image: "${textPart.text}"`);
+            }
+            throw new Error("Image editing failed: The model did not return an image.");
+        }
+    } catch (error) {
+        console.error("Error editing visual explanation:", error);
+        if (error instanceof Error) {
+            throw new Error(`Failed to edit image: ${error.message}`);
+        }
+        throw new Error("An unknown error occurred while editing the image.");
+    }
 }
 
 export async function* generateAnimationExplanation(keyword: string): AsyncGenerator<{ status: 'PENDING' | 'RUNNING' | 'DONE' | 'ERROR'; message?: string; url?: string; }> {
